@@ -1,0 +1,490 @@
+import cv2
+import threading
+import time
+import queue
+import os
+import numpy as np
+from ultralytics import YOLO
+from datetime import datetime
+
+
+class CameraService:
+    def __init__(self, source=0):
+        self.source = source
+        self.cap = cv2.VideoCapture(source)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        self.frame = None
+        self.running = False
+        self.lock = threading.Lock()
+
+    def start(self):
+        if self.running: return
+        self.running = True
+        self.thread = threading.Thread(target=self._update, daemon=True)
+        self.thread.start()
+        print("Camera service started.")
+
+    def _update(self):
+        while self.running:
+            ret, frame = self.cap.read()
+            if ret:
+                with self.lock:
+                    self.frame = frame
+            else:
+                time.sleep(0.01)
+
+    def get_frame(self):
+        with self.lock:
+            return self.frame.copy() if self.frame is not None else None
+
+    def stop(self):
+        self.running = False
+        if hasattr(self, 'thread'):
+            self.thread.join()
+        self.cap.release()
+
+
+# COCO weapon class IDs used by YOLOv8
+# 43 = knife, 76 = scissors  (removed 34/39 — too many false positives)
+WEAPON_CLASSES = [43, 76]
+WEAPON_NAMES = {43: "KNIFE", 76: "SCISSORS"}
+
+# How many consecutive frames a weapon must appear before triggering an alert
+WEAPON_CONFIRM_FRAMES = 1
+# Confidence thresholds
+WEAPON_GLOBAL_CONF = 0.20   # Full-frame scan
+WEAPON_CROP_CONF   = 0.10   # Extremely lenient crop scan for held weapons
+
+
+class DetectionEngine:
+    def __init__(self, model_path="yolov8n.pt", weapon_model_path=None):
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(current_dir)
+        models_dir = os.path.join(project_root, "models")
+
+        # --- Robust model loading: prefer yolov8s, fallback to yolov8n ---
+        loaded_model = None
+        candidates = [model_path, "yolov8s.pt", "yolov8n.pt"]
+        # Also check the project root for pre-downloaded models
+        for candidate in candidates:
+            full_path = os.path.join(project_root, candidate)
+            if os.path.exists(full_path):
+                try:
+                    loaded_model = YOLO(full_path)
+                    print(f"[Engine] Loaded person model: {full_path}")
+                    break
+                except Exception as e:
+                    print(f"[Engine] Failed to load {full_path}: {e}")
+            else:
+                # Let YOLO try to load (may autodownload from ultralytics hub)
+                try:
+                    loaded_model = YOLO(candidate)
+                    print(f"[Engine] Loaded person model from cache: {candidate}")
+                    break
+                except Exception as e:
+                    print(f"[Engine] Could not load {candidate}: {e}")
+
+        if loaded_model is None:
+            raise RuntimeError("Could not load any YOLO model. Please run scripts/download_models.py")
+        self.person_model = loaded_model
+
+        # --- Dedicated Weapon Model (optional) ---
+        self.weapon_model = None
+        w_path = os.path.join(models_dir, "weapon_detection.pt")
+        if weapon_model_path and os.path.exists(weapon_model_path):
+            try:
+                self.weapon_model = YOLO(weapon_model_path)
+                print(f"[Engine] Loaded specialized weapon model: {weapon_model_path}")
+            except Exception as e:
+                print(f"[Engine] Failed to load weapon model: {e}")
+        elif os.path.exists(w_path):
+            try:
+                self.weapon_model = YOLO(w_path)
+                print(f"[Engine] Loaded specialized weapon model: {w_path}")
+            except Exception as e:
+                print(f"[Engine] Failed to load weapon model: {e}")
+        else:
+            print("[Engine] No specialized weapon model found — using COCO knife/scissors classes from person model.")
+
+        # --- Face Detection (YuNet) ---
+        yunet_path = os.path.join(models_dir, "face_detection_yunet.onnx")
+        self.face_detector = cv2.FaceDetectorYN.create(
+            yunet_path, "", (320, 320), 0.85, 0.3, 5000
+        )
+
+        # --- Face Recognition (SFace) ---
+        sface_path = os.path.join(models_dir, "face_recognition_sface.onnx")
+        self.face_recognizer = cv2.FaceRecognizerSF.create(sface_path, "")
+
+        # --- Face Database ---
+        self.authorized_faces = {}
+        self.storage_dir = os.path.join(project_root, "storage")
+        self.load_authorized_faces()
+
+        # --- Tracking State ---
+        self.seen_authorized = set()
+        self.seen_unauthorized = set()
+        self.logged_ids = set()
+
+        # --- Weapon Temporal Confirmation Buffer ---
+        # Counts how many consecutive frames a weapon has been detected.
+        # An alert only fires when this reaches WEAPON_CONFIRM_FRAMES.
+        self._weapon_frame_streak = 0
+        self._weapon_confirmed = False   # Stays True until weapon disappears for N frames
+        self._weapon_clear_streak = 0    # Counts consecutive clear (no weapon) frames
+        
+        # --- Dynamic Configurable Thresholds ---
+        self.face_threshold = 0.40
+        self.weapon_threshold = 0.20 # Matches WEAPON_GLOBAL_CONF default
+    
+    def update_thresholds(self, face_thresh, weapon_thresh):
+        """Update detection thresholds from settings."""
+        self.face_threshold = face_thresh
+        self.weapon_threshold = weapon_thresh
+        print(f"[Engine] Thresholds updated: Face={self.face_threshold:.2f}, Weapon={self.weapon_threshold:.2f}")
+
+    def load_authorized_faces(self):
+        auth_dir = os.path.join(self.storage_dir, "authorized_faces")
+        if not os.path.exists(auth_dir):
+            os.makedirs(auth_dir)
+
+        count = 0
+        for filename in os.listdir(auth_dir):
+            if filename.lower().endswith((".jpg", ".png", ".jpeg")):
+                name = os.path.splitext(filename)[0]
+                img = cv2.imread(os.path.join(auth_dir, filename))
+                if img is not None:
+                    found = False
+                    for scale in [1.0, 0.5, 2.0]:
+                        test_img = img if scale == 1.0 else cv2.resize(img, (0, 0), fx=scale, fy=scale)
+                        self.face_detector.setInputSize((test_img.shape[1], test_img.shape[0]))
+                        faces = self.face_detector.detect(test_img)
+                        if faces[1] is not None:
+                            conf = faces[1][0][-1]
+                            face_aligned = self.face_recognizer.alignCrop(test_img, faces[1][0])
+                            embedding = self.face_recognizer.feature(face_aligned)
+                            self.authorized_faces[name] = embedding
+                            print(f"[Faces] Loaded: {name} (conf: {conf:.2f})")
+                            count += 1
+                            found = True
+                            break
+                    if not found:
+                        print(f"[Faces] WARNING: No face found in '{filename}'. Use a clear portrait photo.")
+        print(f"[Faces] Total authorized faces ready: {count}")
+
+    def _detect_weapons_in_frame(self, frame, conf_threshold=0.40):
+        """
+        Run a dedicated weapon-only detection pass on the given frame.
+        Returns a list of [x1, y1, x2, y2, class_name, confidence] detections.
+        """
+        weapon_hits = []
+
+        # --- Pass 1: Use specialized weapon model if available ---
+        if self.weapon_model:
+            # Use ultra-low threshold for specialized weapon model
+            results = self.weapon_model.predict(frame, verbose=False, conf=min(conf_threshold, 0.20), imgsz=640)
+            if results and results[0].boxes:
+                for box in results[0].boxes:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cf = float(box.conf[0])
+                    weapon_hits.append([x1, y1, x2, y2, "WEAPON", cf])
+
+        # --- Pass 2: COCO weapon classes from person model (knife=43, scissors=76, bat=34, bottle=39) ---
+        # Run at higher resolution, filter ONLY weapon classes for speed & accuracy
+        results = self.person_model.predict(
+            frame,
+            verbose=False,
+            conf=conf_threshold,
+            imgsz=640,
+            classes=WEAPON_CLASSES,   # <-- CRITICAL: only look for weapons
+            agnostic_nms=True
+        )
+        if results and results[0].boxes:
+            for box in results[0].boxes:
+                cls = int(box.cls[0])
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                cf = float(box.conf[0])
+                label = WEAPON_NAMES.get(cls, f"WEAPON-{cls}")
+                weapon_hits.append([x1, y1, x2, y2, label, cf])
+
+        return weapon_hits
+
+    def _detect_weapons_in_crops(self, frame, person_boxes_scaled, frame_w, frame_h, conf_threshold=0.35):
+        """
+        For each detected person bounding box, crop the person area with padding and
+        run a dedicated weapon-only pass at high resolution. Returns global-coord weapon hits.
+        """
+        weapon_hits = []
+        for (px1, py1, px2, py2) in person_boxes_scaled:
+            cw, ch = px2 - px1, py2 - py1
+            # 30% padding around person on X, 15% on Y to catch outstretched arms holding weapons
+            c_x1 = max(0, int(px1 - cw * 0.30))
+            c_y1 = max(0, int(py1 - ch * 0.15))
+            c_x2 = min(frame_w, int(px2 + cw * 0.30))
+            c_y2 = min(frame_h, int(py2 + ch * 0.15))
+
+            crop = frame[c_y1:c_y2, c_x1:c_x2]
+            if crop.size == 0 or crop.shape[0] < 10 or crop.shape[1] < 10:
+                continue
+
+            # Scale up small crops so the model gets enough detail
+            crop_h, crop_w = crop.shape[:2]
+            scale = max(1.0, 416 / min(crop_h, crop_w))
+            if scale > 1.0:
+                crop = cv2.resize(crop, (int(crop_w * scale), int(crop_h * scale)))
+                inv_scale_x = 1.0 / scale
+                inv_scale_y = 1.0 / scale
+            else:
+                inv_scale_x = 1.0
+                inv_scale_y = 1.0
+
+            # Run weapon-only detection on this crop
+            results = self.person_model.predict(
+                crop,
+                verbose=False,
+                conf=conf_threshold,
+                imgsz=640,
+                classes=WEAPON_CLASSES,
+                agnostic_nms=True
+            )
+            if results and results[0].boxes:
+                for box in results[0].boxes:
+                    cls = int(box.cls[0])
+                    bx1, by1, bx2, by2 = map(int, box.xyxy[0])
+                    cf = float(box.conf[0])
+                    # Map back to original frame coords
+                    gx1 = int(bx1 * inv_scale_x) + c_x1
+                    gy1 = int(by1 * inv_scale_y) + c_y1
+                    gx2 = int(bx2 * inv_scale_x) + c_x1
+                    gy2 = int(by2 * inv_scale_y) + c_y1
+                    label = WEAPON_NAMES.get(cls, f"WEAPON-{cls}")
+                    weapon_hits.append([gx1, gy1, gx2, gy2, label, cf])
+
+        return weapon_hits
+
+    def _merge_weapon_boxes(self, hits, iou_threshold=0.4):
+        """Merge duplicate weapon detections using simple NMS-like overlap check."""
+        if not hits:
+            return []
+        merged = []
+        used = [False] * len(hits)
+        for i, h in enumerate(hits):
+            if used[i]:
+                continue
+            best = h
+            for j in range(i + 1, len(hits)):
+                if used[j]:
+                    continue
+                # Check overlap
+                ox1 = max(h[0], hits[j][0])
+                oy1 = max(h[1], hits[j][1])
+                ox2 = min(h[2], hits[j][2])
+                oy2 = min(h[3], hits[j][3])
+                if ox2 > ox1 and oy2 > oy1:
+                    inter = (ox2 - ox1) * (oy2 - oy1)
+                    area_h = (h[2]-h[0]) * (h[3]-h[1])
+                    area_j = (hits[j][2]-hits[j][0]) * (hits[j][3]-hits[j][1])
+                    iou = inter / (area_h + area_j - inter + 1e-6)
+                    if iou > iou_threshold:
+                        # Keep the higher confidence one
+                        if hits[j][5] > best[5]:
+                            best = hits[j]
+                        used[j] = True
+            merged.append(best)
+            used[i] = True
+        return merged
+
+    def process_frame(self, frame, skip_ai=False):
+        if frame is None:
+            return None, {}
+
+        h, w = frame.shape[:2]
+        results_data = {
+            "detections": [],
+            "authorized_count": 0,
+            "unauthorized_count": 0,
+            "weapon_count": 0,
+            "new_event": None
+        }
+
+        if skip_ai:
+            results_data["total_authorized"] = len(self.seen_authorized)
+            results_data["total_unauthorized"] = len(self.seen_unauthorized)
+            return None, results_data
+
+        # --- Prepare AI frame (640px wide for fast person tracking) ---
+        ai_w = 640
+        ai_h = int(640 * h / w)
+        ai_frame = cv2.resize(frame, (ai_w, ai_h))
+        sx, sy = w / ai_w, h / ai_h
+
+        # ===================================================
+        # STEP 1: Face Detection on AI frame
+        # ===================================================
+        self.face_detector.setInputSize((ai_w, ai_h))
+        faces = self.face_detector.detect(ai_frame)
+        frame_faces = []
+        if faces[1] is not None:
+            for face in faces[1]:
+                try:
+                    face_aligned = self.face_recognizer.alignCrop(ai_frame, face)
+                    embedding = self.face_recognizer.feature(face_aligned)
+                    best_match, max_sim = "Unknown", -1
+                    for name, auth_emb in self.authorized_faces.items():
+                        sim = self.face_recognizer.match(embedding, auth_emb, 0)
+                        if sim > max_sim:
+                            max_sim = sim
+                            best_match = name
+                    fx, fy, fw, fh = map(int, face[:4])
+                    frame_faces.append({"box": [fx, fy, fx + fw, fy + fh], "name": best_match, "sim": max_sim})
+                except Exception as e:
+                    pass
+
+        # ===================================================
+        # STEP 2: Person tracking (persons only, class 0)
+        # ===================================================
+        track_results = self.person_model.track(
+            ai_frame,
+            persist=True,
+            verbose=False,
+            imgsz=640,
+            conf=0.25,
+            iou=0.45,
+            classes=[0],          # Only track persons
+            agnostic_nms=False
+        )
+
+        person_boxes_ai = []   # boxes in ai_frame coords
+        person_boxes_orig = [] # boxes in original frame coords
+
+        if track_results and track_results[0].boxes:
+            for box in track_results[0].boxes:
+                cls = int(box.cls[0])
+                if cls != 0:
+                    continue
+                ax1, ay1, ax2, ay2 = map(int, box.xyxy[0])
+                x1, y1, x2, y2 = int(ax1*sx), int(ay1*sy), int(ax2*sx), int(ay2*sy)
+                track_id = str(int(box.id[0])) if box.id is not None else "Unknown"
+
+                person_boxes_ai.append((ax1, ay1, ax2, ay2))
+                person_boxes_orig.append((x1, y1, x2, y2))
+
+                # Match person to detected face
+                identity, color = "UNAUTHORIZED", [255, 165, 0]
+                for face in frame_faces:
+                    fb = face["box"]
+                    # Face box must be within (or close to) person box
+                    if (fb[0] > ax1 - 80 and fb[2] < ax2 + 80 and
+                            fb[1] > ay1 - 80 and fb[3] < ay2 + 80):
+                        if face["sim"] > self.face_threshold:
+                            identity = f"AUTHORIZED: {face['name']}"
+                            color = [0, 220, 80]
+                            self.seen_authorized.add(face["name"])
+                            results_data["authorized_count"] += 1
+                            if track_id not in self.logged_ids:
+                                print(f"[Auth] Verified: {face['name']} (score: {face['sim']:.3f})")
+                                self.logged_ids.add(track_id)
+                        else:
+                            if track_id not in self.logged_ids:
+                                print(f"[Auth] Rejected: {face['name']} (score: {face['sim']:.3f} < 0.40)")
+                        break
+
+                if identity == "UNAUTHORIZED":
+                    results_data["unauthorized_count"] += 1
+                    if track_id not in self.seen_unauthorized and track_id != "Unknown":
+                        self.seen_unauthorized.add(track_id)
+                        if not results_data["new_event"] or results_data["new_event"]["type"] != "weapon":
+                            results_data["new_event"] = {
+                                "type": "unauthorized",
+                                "name": "Unknown",
+                                "time": datetime.now().strftime("%H:%M:%S"),
+                                "message": "Unauthorized Person Detected"
+                            }
+
+                results_data["detections"].append({
+                    "box": [x1, y1, x2, y2],
+                    "label": identity,
+                    "color": color
+                })
+
+        # ===================================================
+        # STEP 3: WEAPON DETECTION — Three-pronged approach
+        # ===================================================
+        all_weapon_hits = []
+
+        # 3a. Full-frame global weapon scan on ORIGINAL resolution frame
+        global_hits = self._detect_weapons_in_frame(frame, conf_threshold=self.weapon_threshold)
+        all_weapon_hits.extend(global_hits)
+
+        # 3b. Per-person crop zoom weapon scan (catches held weapons best)
+        if person_boxes_orig:
+            # Crop threshold is usually lower than global to catch small details
+            crop_thresh = max(0.05, self.weapon_threshold - 0.10)
+            crop_hits = self._detect_weapons_in_crops(
+                frame, person_boxes_orig, w, h, conf_threshold=crop_thresh
+            )
+            all_weapon_hits.extend(crop_hits)
+
+        # 3c. Also scan the AI frame (belt-and-suspenders backup)
+        ai_hits_raw = self._detect_weapons_in_frame(ai_frame, conf_threshold=self.weapon_threshold)
+        for hit in ai_hits_raw:
+            all_weapon_hits.append([
+                int(hit[0]*sx), int(hit[1]*sy),
+                int(hit[2]*sx), int(hit[3]*sy),
+                hit[4], hit[5]
+            ])
+
+        # Merge overlapping weapon boxes
+        merged_weapons = self._merge_weapon_boxes(all_weapon_hits)
+
+        # ===================================================
+        # TEMPORAL CONFIRMATION: only alert after N consecutive
+        # frames of detection to eliminate hand-gesture flickers
+        # ===================================================
+        if merged_weapons:
+            self._weapon_frame_streak += 1
+            self._weapon_clear_streak = 0
+            best_weapon = max(merged_weapons, key=lambda x: x[5])
+            print(f"[Weapon] Streak {self._weapon_frame_streak}/{WEAPON_CONFIRM_FRAMES}: "
+                  f"{best_weapon[4]} (conf: {best_weapon[5]:.3f})")
+
+            if self._weapon_frame_streak >= WEAPON_CONFIRM_FRAMES:
+                self._weapon_confirmed = True
+        else:
+            self._weapon_clear_streak += 1
+            # Only clear confirmed state after weapon has been gone for 6 frames
+            if self._weapon_clear_streak >= 6:
+                self._weapon_confirmed = False
+                self._weapon_frame_streak = 0
+
+        # ALWAYS draw weapon boxes if they are detected (even before confirmation)
+        if merged_weapons:
+            for w_hit in merged_weapons:
+                wx1, wy1, wx2, wy2, w_label, w_conf = w_hit
+                results_data["weapon_count"] += 1
+                results_data["detections"].append({
+                    "box": [wx1, wy1, wx2, wy2],
+                    "label": f"{w_label} ({w_conf:.2f})",
+                    "color": [255, 30, 30]
+                })
+
+        # Only fire EVENTS if weapon is confirmed
+        if self._weapon_confirmed and merged_weapons:
+            best_weapon = max(merged_weapons, key=lambda x: x[5])
+            # Weapon threat is HIGHEST priority — always overrides other events
+            results_data["new_event"] = {
+                "type": "weapon",
+                "name": "THREAT",
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "message": f"{best_weapon[4]} Confirmed! (Conf: {best_weapon[5]:.2f})"
+            }
+
+        # ===================================================
+        # STEP 4: Return with cumulative totals
+        # ===================================================
+        results_data["total_authorized"] = len(self.seen_authorized)
+        results_data["total_unauthorized"] = len(self.seen_unauthorized)
+        return None, results_data
