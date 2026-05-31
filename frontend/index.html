@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentinel AI | Smart Surveillance</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #030712; color: #f9fafb; overflow: hidden; }
+        .glass { background: rgba(17, 24, 39, 0.7); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.08); }
+        .glass-dark { background: rgba(0, 0, 0, 0.4); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.05); }
+        .glow-red { box-shadow: 0 0 30px rgba(239, 68, 68, 0.2); }
+        .glow-indigo { box-shadow: 0 0 30px rgba(79, 70, 229, 0.2); }
+        .status-pulse { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.2); } }
+        
+        .nav-btn.active { background: rgba(79, 70, 229, 0.2); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.3); }
+        .nav-btn:not(.active) { color: #9ca3af; }
+        .nav-btn:not(.active):hover { background: rgba(255, 255, 255, 0.05); color: #f3f4f6; }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+        
+        .view-section { transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+        .view-section.hidden { opacity: 0; transform: translateY(10px); pointer-events: none; position: absolute; }
+        
+        @keyframes slide-up { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .animate-slide-up { animation: slide-up 0.4s ease-out forwards; }
+        
+        .dropdown-panel { transform-origin: top right; transition: all 0.2s ease-out; z-index: 1000 !important; }
+        .dropdown-panel.hidden { transform: scale(0.95); opacity: 0; pointer-events: none; }
+    </style>
+</head>
+<body class="h-screen w-screen selection:bg-indigo-500/30">
+    <div class="flex h-full w-full bg-[#030712] relative overflow-hidden">
+        <!-- Background Glows -->
+        <div class="absolute -top-40 -left-40 w-96 h-96 bg-indigo-600/10 rounded-full blur-[100px]"></div>
+        <div class="absolute -bottom-40 -right-40 w-96 h-96 bg-purple-600/10 rounded-full blur-[100px]"></div>
+
+        <!-- Sidebar -->
+        <aside class="w-72 glass border-r border-white/5 flex flex-col p-8 space-y-10 z-50">
+            <div class="flex items-center space-x-4">
+                <div class="p-2.5 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl shadow-lg shadow-indigo-500/20">
+                    <i data-lucide="shield" class="w-7 h-7 text-white"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-black tracking-tighter text-white">SENTINEL <span class="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">AI</span></h1>
+                    <p class="text-[10px] text-gray-500 font-bold uppercase tracking-widest leading-none">Security Suite</p>
+                </div>
+            </div>
+
+            <nav class="flex-1 space-y-1.5">
+                <button onclick="switchView('dashboard')" id="nav-dashboard" class="nav-btn active w-full flex items-center space-x-3.5 p-3.5 rounded-2xl transition-all duration-300">
+                    <i data-lucide="layout-dashboard" class="w-5 h-5"></i>
+                    <span class="font-semibold text-sm">Dashboard</span>
+                </button>
+                <button onclick="switchView('authorized')" id="nav-authorized" class="nav-btn w-full flex items-center space-x-3.5 p-3.5 rounded-2xl transition-all duration-300">
+                    <i data-lucide="users" class="w-5 h-5"></i>
+                    <span class="font-semibold text-sm">Authorized</span>
+                </button>
+                <button onclick="switchView('history')" id="nav-history" class="nav-btn w-full flex items-center space-x-3.5 p-3.5 rounded-2xl transition-all duration-300">
+                    <i data-lucide="history" class="w-5 h-5"></i>
+                    <span class="font-semibold text-sm">Event Logs</span>
+                </button>
+                <button onclick="switchView('settings')" id="nav-settings" class="nav-btn w-full flex items-center space-x-3.5 p-3.5 rounded-2xl transition-all duration-300">
+                    <i data-lucide="settings-2" class="w-5 h-5"></i>
+                    <span class="font-semibold text-sm">System Config</span>
+                </button>
+            </nav>
+
+            <div class="space-y-4">
+                <div class="p-5 rounded-3xl bg-white/5 border border-white/5 space-y-4 relative overflow-hidden group">
+                    <div class="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity">
+                        <i data-lucide="zap" class="w-12 h-12"></i>
+                    </div>
+                    <div class="flex items-center space-x-2 text-indigo-400">
+                        <i data-lucide="activity" class="w-4 h-4"></i>
+                        <span class="text-[10px] font-black uppercase tracking-widest">Live Engine</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-2">
+                            <div class="w-2.5 h-2.5 rounded-full bg-green-500 status-pulse shadow-[0_0_10px_rgba(34,197,94,0.5)]"></div>
+                            <span class="text-xs font-bold text-gray-300">Operational</span>
+                        </div>
+                        <span class="text-[10px] text-gray-500 font-mono">12ms</span>
+                    </div>
+                </div>
+                
+                <button onclick="logout()" class="w-full flex items-center justify-center space-x-2 p-4 rounded-2xl border border-red-500/20 text-red-400 hover:bg-red-500/10 transition-all text-sm font-bold">
+                    <i data-lucide="log-out" class="w-4 h-4"></i>
+                    <span>Terminate Session</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <div class="flex-1 flex flex-col relative z-10 h-screen overflow-hidden">
+            <!-- Header -->
+            <header class="h-24 px-10 flex justify-between items-center border-b border-white/5 glass-dark shrink-0 z-50">
+                <div class="animate-slide-up">
+                    <h2 id="view-title" class="text-2xl font-black text-white">Security Intelligence Dashboard</h2>
+                    <p id="view-subtitle" class="text-xs text-gray-500 font-bold uppercase tracking-widest">Active Surveillance • Neural Node 01</p>
+                </div>
+                
+                <div class="flex items-center space-x-6">
+                    <div class="flex flex-col items-end pr-6 border-r border-white/10">
+                        <span id="current-time" class="text-xl font-mono font-black tracking-tighter text-indigo-400 leading-none">00:00:00</span>
+                        <span id="current-date" class="text-[10px] text-gray-500 font-bold uppercase tracking-[0.2em] mt-1">MAY 07, 2026</span>
+                    </div>
+
+                    <div class="flex items-center space-x-3 relative">
+                        <!-- Notifications -->
+                        <div class="relative">
+                            <button onclick="toggleDropdown('notif-panel')" class="p-3.5 glass hover:bg-white/10 rounded-2xl transition-all relative group">
+                                <i data-lucide="bell" class="w-5 h-5 text-gray-400 group-hover:text-white transition-colors"></i>
+                                <div id="notif-badge" class="hidden absolute top-2 right-2 w-4 h-4 bg-red-500 border-2 border-[#030712] rounded-full flex items-center justify-center">
+                                    <span class="text-[8px] font-black text-white">0</span>
+                                </div>
+                            </button>
+                            <!-- Notification Panel -->
+                            <div id="notif-panel" class="dropdown-panel hidden absolute top-16 right-0 w-80 glass rounded-[2rem] shadow-2xl border border-white/10 p-6 space-y-4">
+                                <div class="flex items-center justify-between">
+                                    <h3 class="font-bold text-sm">Notifications</h3>
+                                    <button onclick="clearNotifs()" class="text-[10px] text-indigo-400 font-black uppercase hover:underline">Clear All</button>
+                                </div>
+                                <div id="notif-list" class="space-y-3 max-h-60 overflow-y-auto custom-scrollbar">
+                                    <p class="text-center text-xs text-gray-500 py-4">No unread alerts</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Profile -->
+                        <div class="relative">
+                            <button onclick="toggleDropdown('profile-panel')" class="w-12 h-12 glass rounded-2xl flex items-center justify-center font-black text-indigo-400 hover:text-white hover:bg-indigo-600/20 transition-all border-indigo-500/20">
+                                A
+                            </button>
+                            <!-- Profile Panel -->
+                            <div id="profile-panel" class="dropdown-panel hidden absolute top-16 right-0 w-64 glass rounded-[2rem] shadow-2xl border border-white/10 p-6 space-y-4">
+                                <div class="flex items-center space-x-3 pb-4 border-b border-white/5">
+                                    <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-bold">A</div>
+                                    <div>
+                                        <p class="text-sm font-bold">Administrator</p>
+                                        <p class="text-[10px] text-gray-500">Root Access</p>
+                                    </div>
+                                </div>
+                                <div class="space-y-1">
+                                    <button class="w-full text-left p-3 rounded-xl hover:bg-white/5 text-xs text-gray-400 hover:text-white transition-all flex items-center space-x-3">
+                                        <i data-lucide="user" class="w-4 h-4"></i>
+                                        <span>Account Settings</span>
+                                    </button>
+                                    <button class="w-full text-left p-3 rounded-xl hover:bg-white/5 text-xs text-gray-400 hover:text-white transition-all flex items-center space-x-3">
+                                        <i data-lucide="shield-check" class="w-4 h-4"></i>
+                                        <span>Privacy & Security</span>
+                                    </button>
+                                    <button onclick="logout()" class="w-full text-left p-3 rounded-xl hover:bg-red-500/10 text-xs text-red-500 transition-all flex items-center space-x-3">
+                                        <i data-lucide="log-out" class="w-4 h-4"></i>
+                                        <span>Sign Out</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Main Content Area -->
+            <main class="flex-1 overflow-y-auto custom-scrollbar p-10 space-y-10">
+                
+                <!-- VIEW: Dashboard -->
+                <div id="view-dashboard" class="view-section space-y-10">
+                    <!-- Stats Grid -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 animate-slide-up">
+                        <div class="glass p-7 rounded-[2rem] border-white/5 hover:border-indigo-500/30 transition-all group relative overflow-hidden">
+                            <div class="absolute -right-4 -bottom-4 opacity-[0.03] group-hover:opacity-10 transition-opacity">
+                                <i data-lucide="eye" class="w-24 h-24"></i>
+                            </div>
+                            <div class="flex items-center justify-between mb-6">
+                                <div class="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 group-hover:scale-110 transition-transform">
+                                    <i data-lucide="eye" class="w-6 h-6"></i>
+                                </div>
+                                <span class="text-[10px] font-black text-indigo-400 bg-indigo-400/10 px-2 py-1 rounded-lg tracking-widest uppercase">Live View</span>
+                            </div>
+                            <h3 class="text-gray-400 text-[10px] font-black uppercase tracking-widest">Total People Today</h3>
+                            <p id="stat-total-people" class="text-4xl font-black mt-2 tracking-tighter">0</p>
+                        </div>
+                        
+                        <div class="glass p-7 rounded-[2rem] border-white/5 hover:border-emerald-500/30 transition-all group relative overflow-hidden">
+                            <div class="absolute -right-4 -bottom-4 opacity-[0.03] group-hover:opacity-10 transition-opacity">
+                                <i data-lucide="user-check" class="w-24 h-24"></i>
+                            </div>
+                            <div class="flex items-center justify-between mb-6">
+                                <div class="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+                                    <i data-lucide="user-check" class="w-6 h-6"></i>
+                                </div>
+                            </div>
+                            <h3 class="text-gray-400 text-[10px] font-black uppercase tracking-widest">Authorized Entry</h3>
+                            <p id="stat-authorized" class="text-4xl font-black mt-2 text-emerald-400 tracking-tighter">0</p>
+                        </div>
+
+                        <div class="glass p-7 rounded-[2rem] border-white/5 hover:border-orange-500/30 transition-all group relative overflow-hidden">
+                            <div class="absolute -right-4 -bottom-4 opacity-[0.03] group-hover:opacity-10 transition-opacity">
+                                <i data-lucide="user-x" class="w-24 h-24"></i>
+                            </div>
+                            <div class="flex items-center justify-between mb-6">
+                                <div class="w-12 h-12 rounded-2xl bg-orange-500/10 flex items-center justify-center text-orange-400 group-hover:scale-110 transition-transform">
+                                    <i data-lucide="user-x" class="w-6 h-6"></i>
+                                </div>
+                            </div>
+                            <h3 class="text-gray-400 text-[10px] font-black uppercase tracking-widest">Unauthorized Alerts</h3>
+                            <p id="stat-unauthorized" class="text-4xl font-black mt-2 text-orange-400 tracking-tighter">0</p>
+                        </div>
+
+                        <div class="glass p-7 rounded-[2rem] border-white/5 hover:border-red-500/30 transition-all group relative overflow-hidden">
+                            <div class="absolute -right-4 -bottom-4 opacity-[0.03] group-hover:opacity-10 transition-opacity">
+                                <i data-lucide="shield-alert" class="w-24 h-24"></i>
+                            </div>
+                            <div class="flex items-center justify-between mb-6">
+                                <div class="w-12 h-12 rounded-2xl bg-red-500/10 flex items-center justify-center text-red-400 group-hover:scale-110 transition-transform">
+                                    <i data-lucide="shield-alert" class="w-6 h-6"></i>
+                                </div>
+                            </div>
+                            <h3 class="text-gray-400 text-[10px] font-black uppercase tracking-widest">Critical Threats</h3>
+                            <p id="stat-weapons" class="text-4xl font-black mt-2 text-red-500 tracking-tighter">0</p>
+                        </div>
+                    </div>
+
+                    <!-- Video & Logs -->
+                    <div class="grid grid-cols-1 xl:grid-cols-12 gap-10">
+                        <!-- Stream -->
+                        <div class="xl:col-span-8 space-y-8">
+                            <div class="relative rounded-[3rem] overflow-hidden bg-black border-8 border-white/5 shadow-2xl group glow-indigo transition-all duration-500">
+                                <img id="video-feed" src="/video_feed" class="w-full h-auto aspect-video object-cover" alt="Surveillance Stream">
+                                <canvas id="overlay-canvas" class="absolute inset-0 pointer-events-none"></canvas>
+                                
+                                <!-- Stream Overlays -->
+                                <div class="absolute top-8 left-8 flex items-center space-x-3">
+                                    <div class="px-5 py-2.5 glass-dark rounded-2xl flex items-center space-x-3">
+                                        <div class="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,1)]"></div>
+                                        <span class="text-[10px] font-black uppercase tracking-widest text-white">Live Monitoring</span>
+                                    </div>
+                                    <div class="px-5 py-2.5 glass-dark rounded-2xl text-[10px] font-black uppercase tracking-widest text-indigo-400">
+                                        FPS: 24.5
+                                    </div>
+                                </div>
+
+                                <div id="weapon-warning" class="hidden absolute inset-0 z-50 flex items-center justify-center bg-red-900/40 backdrop-blur-sm">
+                                    <div class="px-12 py-6 bg-red-600 text-white rounded-[2rem] font-black text-3xl animate-bounce shadow-2xl border-4 border-white/20 flex items-center space-x-4">
+                                        <i data-lucide="shield-alert" class="w-10 h-10"></i>
+                                        <span>THREAT DETECTED</span>
+                                    </div>
+                                </div>
+
+                                <div id="alert-overlay" class="absolute inset-0 border-[20px] border-red-500/30 opacity-0 pointer-events-none transition-all duration-300"></div>
+                            </div>
+
+                            <div class="flex justify-between items-center bg-white/5 p-6 rounded-[2rem] border border-white/5">
+                                <div class="flex space-x-3">
+                                    <button id="btn-capture" onclick="captureFrame()" class="px-8 py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-black text-sm transition-all flex items-center space-x-3 shadow-xl shadow-indigo-500/20">
+                                        <i data-lucide="camera" class="w-5 h-5"></i>
+                                        <span>SNAP ARCHIVE</span>
+                                    </button>
+                                </div>
+                                <div class="flex items-center space-x-8 text-gray-500 font-mono text-[10px] font-bold">
+                                    <span class="flex items-center uppercase tracking-widest"><i data-lucide="activity" class="w-3.5 h-3.5 mr-2 text-indigo-500"></i> ENGINE STATUS: ACTIVE</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Logs -->
+                        <div class="xl:col-span-4 glass rounded-[3rem] p-10 border border-white/5 flex flex-col h-full min-h-[600px] animate-slide-up">
+                            <div class="flex items-center justify-between mb-10">
+                                <div>
+                                    <h2 class="text-xl font-black text-white">Live Intelligence</h2>
+                                    <p class="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Real-time object mapping</p>
+                                </div>
+                                <button onclick="switchView('history')" class="p-3 glass hover:bg-white/10 rounded-xl transition-all">
+                                    <i data-lucide="arrow-up-right" class="w-5 h-5 text-indigo-400"></i>
+                                </button>
+                            </div>
+                            
+                            <div id="activity-log" class="flex-1 space-y-4 overflow-y-auto custom-scrollbar pr-3">
+                                <div class="text-center py-20 opacity-20">
+                                    <i data-lucide="scan-eye" class="w-16 h-16 mx-auto mb-4"></i>
+                                    <p class="text-xs font-bold uppercase tracking-widest">Scanning Environment...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VIEW: Authorized -->
+                <div id="view-authorized" class="view-section hidden space-y-10">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <h2 class="text-3xl font-black text-white tracking-tighter">Authorized Personnel</h2>
+                            <p class="text-xs text-gray-500 font-bold uppercase tracking-widest">White-listed Identities • Node DB</p>
+                        </div>
+                        <button onclick="toggleModal('register-modal')" class="px-8 py-4 bg-emerald-600 hover:bg-emerald-700 rounded-2xl font-black text-sm transition-all flex items-center space-x-3 shadow-xl shadow-emerald-500/20">
+                            <i data-lucide="plus-circle" class="w-5 h-5"></i>
+                            <span>REGISTER NEW SUBJECT</span>
+                        </button>
+                    </div>
+                    <div id="authorized-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8"></div>
+                </div>
+
+                <!-- VIEW: History -->
+                <div id="view-history" class="view-section hidden space-y-10">
+                    <div>
+                        <h2 class="text-3xl font-black text-white tracking-tighter">Neural Event Archive</h2>
+                        <p class="text-xs text-gray-500 font-bold uppercase tracking-widest">Historical Event Snapshots • Forensic Data</p>
+                    </div>
+                    <div id="history-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8"></div>
+                </div>
+
+                <!-- VIEW: Settings -->
+                <div id="view-settings" class="view-section hidden space-y-10">
+                    <div>
+                        <h2 class="text-3xl font-black text-white tracking-tighter">System Configuration</h2>
+                        <p class="text-xs text-gray-500 font-bold uppercase tracking-widest">Engine Tuning • Alert Protocols</p>
+                    </div>
+                    <div class="max-w-4xl grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div class="glass p-10 rounded-[3rem] border-white/5 space-y-10">
+                            <h3 class="text-xl font-bold flex items-center space-x-3">
+                                <i data-lucide="brain-circuit" class="w-6 h-6 text-indigo-400"></i>
+                                <span>AI Threshold Tuning</span>
+                            </h3>
+                            <div class="space-y-8">
+                                <div class="space-y-4">
+                                    <div class="flex justify-between text-[10px] font-black uppercase tracking-widest">
+                                        <span class="text-gray-500">Face Recognition</span>
+                                        <span class="text-indigo-400" id="label-face-thresh">0.40 Accuracy</span>
+                                    </div>
+                                    <input type="range" id="slider-face-thresh" min="15" max="60" value="40" class="w-full h-1.5 bg-white/5 rounded-lg appearance-none cursor-pointer accent-indigo-500">
+                                </div>
+                                <div class="space-y-4">
+                                    <div class="flex justify-between text-[10px] font-black uppercase tracking-widest">
+                                        <span class="text-gray-500">Weapon Detection</span>
+                                        <span class="text-red-500" id="label-weapon-thresh">0.50 Confidence</span>
+                                    </div>
+                                    <input type="range" id="slider-weapon-thresh" min="10" max="90" value="50" class="w-full h-1.5 bg-white/5 rounded-lg appearance-none cursor-pointer accent-red-500">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="glass p-10 rounded-[3rem] border-white/5 space-y-10">
+                            <h3 class="text-xl font-bold flex items-center space-x-3">
+                                <i data-lucide="mail-check" class="w-6 h-6 text-indigo-400"></i>
+                                <span>Notification Protocols</span>
+                            </h3>
+                            <div class="space-y-6">
+                                <label class="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/5 cursor-pointer group">
+                                    <div class="flex items-center space-x-3">
+                                        <i data-lucide="mail" class="w-5 h-5 text-gray-500 group-hover:text-indigo-400"></i>
+                                        <span class="text-sm font-bold">Email Notifications</span>
+                                    </div>
+                                    <input type="checkbox" id="check-email" checked class="w-5 h-5 rounded border-white/20 bg-black text-indigo-600 focus:ring-0">
+                                </label>
+                                <label class="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/5 cursor-pointer group">
+                                    <div class="flex items-center space-x-3">
+                                        <i data-lucide="image" class="w-5 h-5 text-gray-500 group-hover:text-indigo-400"></i>
+                                        <span class="text-sm font-bold">Auto-Capture Snapshot</span>
+                                    </div>
+                                    <input type="checkbox" id="check-snapshot" checked class="w-5 h-5 rounded border-white/20 bg-black text-indigo-600 focus:ring-0">
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="register-modal" class="hidden fixed inset-0 z-[200] flex items-center justify-center p-6">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-md" onclick="toggleModal('register-modal')"></div>
+        <div class="glass relative w-full max-w-md p-10 rounded-[3rem] border-white/10 space-y-8 animate-slide-up">
+            <div class="flex justify-between items-center">
+                <h3 class="text-2xl font-black text-white">Register Subject</h3>
+                <button onclick="toggleModal('register-modal')" class="p-2 glass hover:bg-white/10 rounded-xl"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <form id="register-form" class="space-y-6">
+                <div class="space-y-2">
+                    <label class="text-[10px] font-black uppercase tracking-widest text-gray-500">Subject Name</label>
+                    <input type="text" name="name" required placeholder="Enter full name" class="w-full p-4 rounded-2xl bg-white/5 border border-white/10 text-white focus:border-indigo-500 outline-none transition-all">
+                </div>
+                <div class="space-y-2">
+                    <label class="text-[10px] font-black uppercase tracking-widest text-gray-500">Portrait Image</label>
+                    <input type="file" name="image" accept="image/*" required class="w-full p-4 rounded-2xl bg-white/5 border border-white/10 text-gray-400 file:bg-indigo-600 file:border-none file:rounded-lg file:px-3 file:py-1 file:text-white file:text-xs file:font-bold file:mr-4">
+                </div>
+                <button type="submit" class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-black text-sm transition-all shadow-xl shadow-indigo-500/20">REGISTER SUBJECT</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // UI Navigation Logic
+        const views = {
+            dashboard: { title: "Security Intelligence Dashboard", subtitle: "Active Surveillance • Neural Node 01" },
+            authorized: { title: "Authorized Personnel", subtitle: "White-listed Identities • Node DB" },
+            history: { title: "Neural Event Archive", subtitle: "Historical Event Snapshots • Forensic Data" },
+            settings: { title: "System Configuration", subtitle: "Engine Tuning • Alert Protocols" }
+        };
+
+        async function switchView(viewName) {
+            // Update Navigation Buttons
+            document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(`nav-${viewName}`).classList.add('active');
+
+            // Header Update
+            document.getElementById('view-title').textContent = views[viewName].title;
+            document.getElementById('view-subtitle').textContent = views[viewName].subtitle;
+
+            // Section Switch
+            document.querySelectorAll('.view-section').forEach(s => s.classList.add('hidden'));
+            const target = document.getElementById(`view-${viewName}`);
+            target.classList.remove('hidden');
+            target.classList.add('animate-slide-up');
+
+            // Data Fetching
+            if (viewName === 'authorized') loadAuthorized();
+            if (viewName === 'history') loadHistory();
+        }
+
+        async function loadAuthorized() {
+            const res = await fetch('/authorized_data');
+            const data = await res.json();
+            const grid = document.getElementById('authorized-grid');
+            grid.innerHTML = data.people.map(p => `
+                <div class="glass p-8 rounded-[2.5rem] border border-white/5 flex flex-col items-center text-center group hover:border-emerald-500/30 transition-all">
+                    <div class="relative mb-6">
+                        <img src="${p.url}" class="w-32 h-32 rounded-3xl object-cover border-4 border-emerald-500/20 shadow-2xl">
+                        <div class="absolute -bottom-2 -right-2 w-8 h-8 bg-emerald-500 rounded-xl flex items-center justify-center border-4 border-[#030712]">
+                            <i data-lucide="check" class="w-4 h-4 text-white"></i>
+                        </div>
+                    </div>
+                    <h3 class="font-black text-xl text-white tracking-tight">${p.name}</h3>
+                    <p class="text-emerald-400 text-[10px] font-black uppercase tracking-widest mt-1">Verified Node</p>
+                </div>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        async function loadHistory() {
+            const res = await fetch('/history');
+            const data = await res.json();
+            const list = document.getElementById('history-list');
+            list.innerHTML = data.history.map(h => `
+                <div class="glass p-5 rounded-[2.5rem] border border-white/5 space-y-4 group hover:border-indigo-500/30 transition-all">
+                    <div class="relative overflow-hidden rounded-[1.5rem]">
+                        <img src="${h.url}" class="w-full h-48 object-cover group-hover:scale-110 transition-transform duration-700">
+                        <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
+                            <button onclick="window.open('${h.url}')" class="w-full py-3 glass rounded-xl text-[10px] font-black uppercase tracking-widest text-white">Inspect Frame</button>
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="calendar" class="w-3.5 h-3.5 text-indigo-400"></i>
+                            <span class="text-[10px] font-black text-gray-400 uppercase">${h.time}</span>
+                        </div>
+                        <span class="px-2 py-1 bg-white/5 rounded-lg text-[8px] font-mono text-gray-500">${h.filename.split('_').pop()}</span>
+                    </div>
+                </div>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        // Modal Logic
+        function toggleModal(id) {
+            const modal = document.getElementById(id);
+            modal.classList.toggle('hidden');
+        }
+
+        document.getElementById('register-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const btn = e.target.querySelector('button');
+            const originalText = btn.textContent;
+            btn.textContent = 'REGISTERING...';
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/upload_authorized', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    alert(data.message);
+                    toggleModal('register-modal');
+                    loadAuthorized();
+                    e.target.reset();
+                } else {
+                    alert(data.message);
+                }
+            } catch (err) {
+                alert('Registration failed');
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
+        };
+
+        // Dropdown Logic
+        function toggleDropdown(id) {
+            const panel = document.getElementById(id);
+            const isHidden = panel.classList.contains('hidden');
+            
+            // Close all first
+            document.querySelectorAll('.dropdown-panel').forEach(p => p.classList.add('hidden'));
+            
+            if (isHidden) panel.classList.remove('hidden');
+        }
+
+        // Close dropdowns on outside click
+        window.onclick = (e) => {
+            if (!e.target.closest('.relative')) {
+                document.querySelectorAll('.dropdown-panel').forEach(p => p.classList.add('hidden'));
+            }
+        };
+
+        // Notifications
+        let notificationCount = 0;
+        function addNotification(event) {
+            notificationCount++;
+            const badge = document.getElementById('notif-badge');
+            badge.classList.remove('hidden');
+            badge.querySelector('span').textContent = notificationCount;
+
+            const list = document.getElementById('notif-list');
+            if (list.innerHTML.includes('No unread alerts')) list.innerHTML = '';
+
+            const item = document.createElement('div');
+            item.className = "p-4 rounded-2xl bg-white/5 border border-white/5 space-y-1 hover:bg-white/10 transition-all cursor-pointer";
+            item.innerHTML = `
+                <div class="flex items-center justify-between">
+                    <span class="text-[10px] font-black uppercase tracking-widest ${event.type === 'weapon' ? 'text-red-500' : 'text-orange-500'}">${event.type} detected</span>
+                    <span class="text-[9px] font-mono text-gray-500">${event.time}</span>
+                </div>
+                <p class="text-xs text-gray-300 font-medium">${event.message}</p>
+            `;
+            list.prepend(item);
+        }
+
+        function clearNotifs() {
+            notificationCount = 0;
+            document.getElementById('notif-badge').classList.add('hidden');
+            document.getElementById('notif-list').innerHTML = '<p class="text-center text-xs text-gray-500 py-4">No unread alerts</p>';
+        }
+
+        function logout() {
+            if (confirm("Terminate active security session?")) {
+                window.location.reload();
+            }
+        }
+
+        // Time Engine
+        setInterval(() => {
+            const now = new Date();
+            document.getElementById('current-time').textContent = now.toTimeString().split(' ')[0];
+            document.getElementById('current-date').textContent = now.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+        }, 1000);
+
+        // Core AI WebSocket
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+        
+        const canvas = document.getElementById('overlay-canvas');
+        const ctx = canvas.getContext('2d');
+        const videoFeed = document.getElementById('video-feed');
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            // Update Stats
+            document.getElementById('stat-total-people').textContent = (data.total_authorized + data.total_unauthorized) || 0;
+            document.getElementById('stat-authorized').textContent = data.total_authorized || 0;
+            document.getElementById('stat-unauthorized').textContent = data.total_unauthorized || 0;
+            document.getElementById('stat-weapons').textContent = data.weapon_count || 0;
+
+            // Handle Critical Threat UI
+            const weaponWarning = document.getElementById('weapon-warning');
+            const alertOverlay = document.getElementById('alert-overlay');
+            if (data.weapon_count > 0) {
+                weaponWarning.classList.remove('hidden');
+                alertOverlay.classList.remove('opacity-0');
+                alertOverlay.classList.add('opacity-100');
+            } else {
+                weaponWarning.classList.add('hidden');
+                alertOverlay.classList.remove('opacity-100');
+                alertOverlay.classList.add('opacity-0');
+            }
+
+            // Canvas Drawing
+            if (data.detections && videoFeed.naturalWidth) {
+                canvas.width = videoFeed.naturalWidth;
+                canvas.height = videoFeed.naturalHeight;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                data.detections.forEach(det => {
+                    const [x1, y1, x2, y2] = det.box;
+                    const color = `rgb(${det.color[0]}, ${det.color[1]}, ${det.color[2]})`;
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 4;
+                    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+                    
+                    ctx.fillStyle = color;
+                    ctx.font = 'black 22px Inter';
+                    const text = det.label.toUpperCase();
+                    const tw = ctx.measureText(text).width + 20;
+                    ctx.fillRect(x1, y1 - 40, tw, 40);
+                    ctx.fillStyle = 'white';
+                    ctx.fillText(text, x1 + 10, y1 - 12);
+                });
+            }
+
+            // Events & Notifications
+            if (data.new_event) {
+                addEvent(data.new_event);
+                if (data.new_event.type === 'weapon' || data.new_event.type === 'unauthorized') {
+                    addNotification(data.new_event);
+                }
+            }
+        };
+
+        function addEvent(event) {
+            const log = document.getElementById('activity-log');
+            if (log.innerHTML.includes('Scanning Environment')) log.innerHTML = '';
+
+            const item = document.createElement('div');
+            item.className = `p-5 rounded-[2rem] border animate-slide-up flex items-center space-x-5 transition-all ${event.type === 'weapon' ? 'bg-red-500/10 border-red-500/20' : 'bg-white/5 border-white/5 hover:bg-white/10'}`;
+            
+            const icon = event.type === 'weapon' ? 'shield-alert' : (event.type === 'authorized' ? 'user-check' : 'user-x');
+            const iconColor = event.type === 'weapon' ? 'text-red-500' : (event.type === 'authorized' ? 'text-emerald-500' : 'text-orange-500');
+            
+            item.innerHTML = `
+                <div class="p-3.5 rounded-2xl bg-black/20 ${iconColor}">
+                    <i data-lucide="${icon}" class="w-5 h-5"></i>
+                </div>
+                <div class="flex-1">
+                    <div class="text-xs font-black text-white uppercase tracking-tight">${event.name || 'Unknown Entity'}</div>
+                    <div class="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-0.5">${event.time} • ${event.message}</div>
+                </div>
+                ${event.snapshot ? `<img src="${event.snapshot}" class="w-12 h-12 rounded-xl object-cover border border-white/10">` : ''}
+            `;
+            
+            log.prepend(item);
+            lucide.createIcons();
+            if (log.children.length > 20) log.lastChild.remove();
+        }
+
+        async function captureFrame() {
+            const btn = document.getElementById('btn-capture');
+            btn.innerHTML = '<i data-lucide="loader" class="w-5 h-5 animate-spin"></i><span>PROCESSING...</span>';
+            lucide.createIcons();
+            
+            try {
+                const res = await fetch('/capture', { method: 'POST' });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    alert('Frame captured and encrypted in local storage.');
+                }
+            } finally {
+                btn.innerHTML = '<i data-lucide="camera" class="w-5 h-5"></i><span>SNAP ARCHIVE</span>';
+                lucide.createIcons();
+            }
+        }
+
+        lucide.createIcons();
+
+        // --- Settings Intelligence Logic ---
+        const sliderFace = document.getElementById('slider-face-thresh');
+        const labelFace = document.getElementById('label-face-thresh');
+        const sliderWeapon = document.getElementById('slider-weapon-thresh');
+        const labelWeapon = document.getElementById('label-weapon-thresh');
+        const checkEmail = document.getElementById('check-email');
+        const checkSnapshot = document.getElementById('check-snapshot');
+
+        function updateSettings() {
+            const config = {
+                face_threshold: sliderFace.value / 100,
+                weapon_threshold: sliderWeapon.value / 100,
+                email_enabled: checkEmail.checked,
+                snapshot_enabled: checkSnapshot.checked
+            };
+            
+            fetch('/update_settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(config)
+            });
+        }
+
+        // Debounce helper
+        let timer;
+        const debounceUpdate = () => {
+            clearTimeout(timer);
+            timer = setTimeout(updateSettings, 500);
+        };
+
+        sliderFace.oninput = () => {
+            labelFace.textContent = `${(sliderFace.value / 100).toFixed(2)} Accuracy`;
+            debounceUpdate();
+        };
+
+        sliderWeapon.oninput = () => {
+            labelWeapon.textContent = `${(sliderWeapon.value / 100).toFixed(2)} Confidence`;
+            debounceUpdate();
+        };
+
+        checkEmail.onchange = updateSettings;
+        checkSnapshot.onchange = updateSettings;
+    </script>
+</body>
+</html>
