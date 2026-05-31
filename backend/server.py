@@ -23,8 +23,8 @@ if not os.path.exists(SNAPSHOT_DIR): os.makedirs(SNAPSHOT_DIR)
 camera = CameraService(source=0)
 engine = DetectionEngine(model_path="yolov8n.pt")
 notifier = EmailNotifier(
-    sender_email="attamannan15@gmail.com",
-    password="bfnt dmhz gfza wdit"
+    sender_email="YOUR EMAIL",
+    password="YOUR PASSWORD"
 )
 connected_clients = set()
 
