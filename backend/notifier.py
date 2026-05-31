@@ -11,7 +11,7 @@ class EmailNotifier:
         self.smtp_port = smtp_port
         self.sender_email = sender_email
         self.password = password
-        self.receiver_email = "attamannan15@gmail.com"
+        self.receiver_email = "YOUR EMAIL"
 
     async def send_alert(self, subject, message, image_path=None):
         if not self.sender_email or not self.password:
